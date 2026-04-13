@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="tr">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Mini Trello</title>
+    <style>
+        body { font-family: system-ui, Arial; margin: 0; padding: 16px; background: #f6f7fb; }
+        h1 { margin: 0 0 12px; }
+        .top { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+        input, select, button { padding: 10px; border-radius: 10px; border: 1px solid #ddd; }
+        button { cursor: pointer; }
+        .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+        .col { background: white; border-radius: 16px; padding: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.06); min-height: 60vh; }
+        .col h2 { margin: 0 0 8px; font-size: 16px; }
+        .card { background: #fff; border: 1px solid #eee; border-radius: 14px; padding: 10px; margin: 10px 0; }
+        .title { font-weight: 700; }
+        .desc { color: #444; margin-top: 6px; font-size: 13px; white-space: pre-wrap; }
+        .actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+        .pill { font-size: 12px; padding: 6px 10px; border-radius: 999px; border: 1px solid #ddd; background: #fafafa; }
+        .danger { border-color: #ffb3b3; background: #fff0f0; }
+        .muted { color: #666; font-size: 12px; }
+        .statusline { display: flex; justify-content: space-between; align-items: baseline; }
+    </style>
+</head>
+<body>
+<h1>Mini Trello</h1>
+
+<div class="top">
+    <input id="title" placeholder="Kart başlığı (ör: Login UI)" size="28" />
+    <input id="desc" placeholder="Açıklama (opsiyonel)" size="40" />
+    <select id="status">
+        <option value="TODO" selected>TODO</option>
+        <option value="DOING">DOING</option>
+        <option value="DONE">DONE</option>
+    </select>
+    <button id="addBtn">Kart Ekle</button>
+    <span class="muted" id="msg"></span>
+</div>
+
+<div class="board">
+    <div class="col" id="todoCol">
+        <div class="statusline"><h2>TODO</h2><span class="muted" id="todoCount"></span></div>
+        <div id="todoList"></div>
+    </div>
+
+    <div class="col" id="doingCol">
+        <div class="statusline"><h2>DOING</h2><span class="muted" id="doingCount"></span></div>
+        <div id="doingList"></div>
+    </div>
+
+    <div class="col" id="doneCol">
+        <div class="statusline"><h2>DONE</h2><span class="muted" id="doneCount"></span></div>
+        <div id="doneList"></div>
+    </div>
+</div>
+
+<script>
+    const API = "/api/tasks";
+
+    const el = (id) => document.getElementById(id);
+
+    function showMsg(text) {
+        el("msg").textContent = text || "";
+        if (text) setTimeout(() => el("msg").textContent = "", 2000);
+    }
+
+    async function apiGet(status) {
+        const res = await fetch(`${API}?status=${status}`);
+        if (!res.ok) throw new Error("GET failed");
+        return res.json();
+    }
+
+    async function apiCreate(title, description, status) {
+        const res = await fetch(API, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: null, title, description, status })
+        });
+        if (!res.ok) throw new Error("POST failed");
+        return res.json();
+    }
+
+    async function apiChangeStatus(id, status) {
+        const res = await fetch(`${API}/${id}/status`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status })
+        });
+        if (!res.ok) throw new Error("PATCH failed");
+        return res.json();
+    }
+
+    async function apiDelete(id) {
+        const res = await fetch(`${API}/${id}`, { method: "DELETE" });
+        if (!res.ok) throw new Error("DELETE failed");
+    }
+
+    function cardHtml(t) {
+        const title = escapeHtml(t.title || "");
+        const desc = escapeHtml(t.description || "");
+        return `
+    <div class="card">
+      <div class="title">${title}</div>
+      ${desc ? `<div class="desc">${desc}</div>` : ""}
+      <div class="actions">
+        ${t.status !== "TODO" ? `<button class="pill" data-move="TODO" data-id="${t.id}">← TODO</button>` : ""}
+        ${t.status !== "DOING" ? `<button class="pill" data-move="DOING" data-id="${t.id}">↔ DOING</button>` : ""}
+        ${t.status !== "DONE" ? `<button class="pill" data-move="DONE" data-id="${t.id}">→ DONE</button>` : ""}
+        <button class="pill danger" data-del="${t.id}">Sil</button>
+        <span class="muted">#${t.id}</span>
+      </div>
+    </div>
+  `;
+    }
+
+    function escapeHtml(s) {
+        return (s || "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+    }
+
+    async function render() {
+        const [todo, doing, done] = await Promise.all([apiGet("TODO"), apiGet("DOING"), apiGet("DONE")]);
+
+        el("todoList").innerHTML = todo.map(cardHtml).join("");
+        el("doingList").innerHTML = doing.map(cardHtml).join("");
+        el("doneList").innerHTML = done.map(cardHtml).join("");
+
+        el("todoCount").textContent = `${todo.length} kart`;
+        el("doingCount").textContent = `${doing.length} kart`;
+        el("doneCount").textContent = `${done.length} kart`;
+    }
+
+    document.addEventListener("click", async (e) => {
+        const move = e.target.getAttribute("data-move");
+        const del = e.target.getAttribute("data-del");
+        try {
+            if (move) {
+                const id = e.target.getAttribute("data-id");
+                await apiChangeStatus(id, move);
+                await render();
+                showMsg("Taşındı ✅");
+            } else if (del) {
+                await apiDelete(del);
+                await render();
+                showMsg("Silindi ✅");
+            }
+        } catch (err) {
+            console.error(err);
+            showMsg("Hata ❌ (konsola bak)");
+        }
+    });
+
+    el("addBtn").addEventListener("click", async () => {
+        const title = el("title").value.trim();
+        const description = el("desc").value.trim();
+        const status = el("status").value;
+
+        if (!title) { showMsg("Başlık boş olamaz"); return; }
+
+        try {
+            await apiCreate(title, description, status);
+            el("title").value = "";
+            el("desc").value = "";
+            el("status").value = "TODO";
+            await render();
+            showMsg("Eklendi ✅");
+        } catch (err) {
+            console.error(err);
+            showMsg("Hata ❌ (konsola bak)");
+        }
+    });
+
+    // ilk yükleme
+    render();
+</script>
+</body>
+</html>
